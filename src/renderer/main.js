@@ -13,7 +13,11 @@ const loader = new GLTFLoader();
 const cats = [];
 let paused = false;
 let adoptedCatCount = 3;
+let showWipeDiagnostic = false;
 const activeWipes = [];
+const wipeDebug = document.createElement("div");
+wipeDebug.style.cssText = "display:none;position:fixed;z-index:10;pointer-events:none;width:28px;height:28px;border:1px dashed rgba(255,255,255,.95);border-radius:50%;box-shadow:0 0 0 1px rgba(25,25,25,.5);transform:translate(-50%,-50%);font:10px monospace;color:#fff;text-shadow:0 1px 2px #000;align-items:center;justify-content:center;";
+document.body.appendChild(wipeDebug);
 
 // Relative asset URLs are required after Electron packages the renderer as file://.../dist/index.html.
 const MODELS = ["cat-white-brown-walk.glb", "cat-white-pink-walk.glb", "cat-fold-walk.glb"].map((filename) => new URL(`./models/${filename}`, window.location.href).href);
@@ -58,6 +62,11 @@ function queueSoftWipe(point) {
   const { x, y } = viewportPoint(point);
   activeWipes.push({ x, y, age: 0 });
   if (activeWipes.length > 80) activeWipes.splice(0, activeWipes.length - 80);
+  if (showWipeDiagnostic) {
+    wipeDebug.style.left = `${x}px`;
+    wipeDebug.style.top = `${y}px`;
+    wipeDebug.textContent = String(activeWipes.length);
+  }
 }
 
 function applySoftWipes(dt) {
@@ -65,15 +74,15 @@ function applySoftWipes(dt) {
     const wipe = activeWipes[index];
     wipe.age += dt;
     const progress = Math.min(wipe.age / 0.32, 1);
-    const radius = 12 + progress * 9;
+    const radius = 13 + progress * 11;
     const gradient = pawCtx.createRadialGradient(wipe.x, wipe.y, radius * 0.08, wipe.x, wipe.y, radius);
-    gradient.addColorStop(0, "rgba(0,0,0,.38)");
-    gradient.addColorStop(0.42, "rgba(0,0,0,.16)");
+    gradient.addColorStop(0, "rgba(0,0,0,1)");
+    gradient.addColorStop(0.42, "rgba(0,0,0,.72)");
     gradient.addColorStop(1, "rgba(0,0,0,0)");
     pawCtx.save();
     pawCtx.globalCompositeOperation = "destination-out";
-    pawCtx.globalAlpha = .62 - progress * .25;
-    pawCtx.filter = `blur(${2.2 + progress * 2.4}px)`;
+    pawCtx.globalAlpha = .82 - progress * .2;
+    pawCtx.filter = `blur(${2.8 + progress * 3}px)`;
     pawCtx.fillStyle = gradient;
     pawCtx.beginPath();
     pawCtx.arc(wipe.x, wipe.y, radius, 0, Math.PI * 2);
@@ -165,11 +174,16 @@ function loop() {
         }
       });
       if (separation.lengthSq() > 0) direction.addScaledVector(separation.normalize(), 1.3).normalize();
-      const heading = Math.atan2(direction.x, direction.z);
+      const horizontalDirection = new THREE.Vector3(direction.x, 0, direction.z).normalize();
+      const heading = Math.atan2(horizontalDirection.x, horizontalDirection.z);
       const delta = Math.atan2(Math.sin(heading - cat.root.rotation.y), Math.cos(heading - cat.root.rotation.y));
       cat.root.rotation.y += THREE.MathUtils.clamp(delta, -dt * .62, dt * .62);
-      const alignment = THREE.MathUtils.clamp(Math.cos(Math.min(Math.abs(delta), Math.PI / 2)), .45, 1);
-      cat.root.position.addScaledVector(direction, dt * .46 * alignment);
+      const alignment = THREE.MathUtils.clamp(Math.cos(Math.min(Math.abs(delta), Math.PI / 2)), 0, 1);
+      // Advance only along the direction the model is already facing; target turning never causes sideways sliding.
+      const forward = new THREE.Vector3(Math.sin(cat.root.rotation.y), 0, Math.cos(cat.root.rotation.y));
+      cat.root.position.addScaledVector(forward, dt * .46 * alignment);
+      const verticalStep = THREE.MathUtils.clamp(cat.target.y - cat.root.position.y, -dt * .12, dt * .12);
+      cat.root.position.y += verticalStep;
       cat.root.position.x = THREE.MathUtils.clamp(cat.root.position.x, ROAM_BOUNDS.minX, ROAM_BOUNDS.maxX);
       cat.root.position.y = THREE.MathUtils.clamp(cat.root.position.y, ROAM_BOUNDS.minY, ROAM_BOUNDS.maxY);
       cat.root.position.z = THREE.MathUtils.clamp(cat.root.position.z, ROAM_BOUNDS.minZ, ROAM_BOUNDS.maxZ);
@@ -206,11 +220,17 @@ function clearPawprints() {
   activeWipes.length = 0;
   pawCtx.clearRect(0, 0, window.innerWidth, window.innerHeight);
 }
+
+function setWipeDiagnostic(enabled) {
+  showWipeDiagnostic = Boolean(enabled);
+  wipeDebug.style.display = showWipeDiagnostic ? "flex" : "none";
+}
 resizePaws();
 renderer.setSize(window.innerWidth, window.innerHeight);
 window.pawDesktop?.onWipeAt(queueSoftWipe);
 window.pawDesktop?.onPaused((value) => { paused = value; });
 window.pawDesktop?.onCatCount(setAdoptedCatCount);
 window.pawDesktop?.onClearPawprints(clearPawprints);
+window.pawDesktop?.onWipeDiagnostic(setWipeDiagnostic);
 window.pawDesktop?.ready();
 loop();

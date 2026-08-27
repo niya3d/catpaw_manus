@@ -15,6 +15,7 @@ let lastWipeAt = 0;
 let adoptedCatCount = 3;
 let cursorPoller;
 let lastCursorPoint;
+let wipeDiagnostics = false;
 
 function settingsPath() {
   return path.join(app.getPath("userData"), "piece-of-niya-settings.json");
@@ -124,6 +125,7 @@ function refreshTrayMenu() {
     { type: "separator" },
     { label: paused ? "Resume cats" : "Pause cats", click: () => { paused = !paused; overlay?.webContents.send("paw:paused", paused); refreshTrayMenu(); } },
     { label: "Clear pawprints", click: () => overlay?.webContents.send("paw:clear-pawprints") },
+    { label: "Show cursor wipe diagnostic", type: "checkbox", checked: wipeDiagnostics, click: (item) => { wipeDiagnostics = item.checked; overlay?.webContents.send("paw:wipe-diagnostic", wipeDiagnostics); refreshTrayMenu(); } },
     { type: "separator" },
     { label: "Quit Piece of Niya", click: () => app.quit() },
   ]));
@@ -145,6 +147,7 @@ app.whenReady().then(() => {
     rendererReady = true;
     overlay?.webContents.send("paw:paused", paused);
     overlay?.webContents.send("paw:set-cat-count", adoptedCatCount);
+    overlay?.webContents.send("paw:wipe-diagnostic", wipeDiagnostics);
   });
   ipcMain.on("paw:renderer-error", (_event, message) => {
     const line = `[${new Date().toISOString()}] ${message}\n`;

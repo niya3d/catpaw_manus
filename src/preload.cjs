@@ -8,4 +8,5 @@ contextBridge.exposeInMainWorld("pawDesktop", {
   onPaused: (callback) => ipcRenderer.on("paw:paused", (_event, value) => callback(value)),
   onCatCount: (callback) => ipcRenderer.on("paw:set-cat-count", (_event, count) => callback(count)),
   onClearPawprints: (callback) => ipcRenderer.on("paw:clear-pawprints", callback),
+  onWipeDiagnostic: (callback) => ipcRenderer.on("paw:wipe-diagnostic", (_event, enabled) => callback(enabled)),
 });
