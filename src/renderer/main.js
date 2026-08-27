@@ -24,6 +24,13 @@ const MODELS = ["cat-white-brown-walk.glb", "cat-white-pink-walk.glb", "cat-fold
 const ROAM_BOUNDS = { minX: -6.6, maxX: 6.6, minY: -2.85, maxY: 1.1, minZ: -2.45, maxZ: 0.35 };
 const STARTING_POINTS = [new THREE.Vector3(-4.6, -1.55, -1.25), new THREE.Vector3(0, -1.15, -1.65), new THREE.Vector3(4.6, -1.55, -1.25)];
 const PERSONAL_SPACE = 1.55;
+// The exported cats face local +X; world heading still uses forward +Z on the root.
+const MODEL_FORWARD_OFFSET = Math.PI / 2;
+const PAW_STYLES = [
+  { minSize: 14, maxSize: 18, width: .92, height: 1.07, blur: 1.6, alpha: .18, toes: [[-.40,-.43,.15],[-.13,-.61,.17],[.16,-.58,.17],[.43,-.38,.14]] },
+  { minSize: 16, maxSize: 21, width: 1.08, height: .93, blur: 2.1, alpha: .15, toes: [[-.46,-.38,.15],[-.16,-.59,.18],[.16,-.59,.18],[.46,-.38,.15]] },
+  { minSize: 18, maxSize: 24, width: 1.13, height: 1.13, blur: 2.6, alpha: .13, toes: [[-.39,-.46,.18],[-.13,-.66,.19],[.15,-.64,.19],[.41,-.43,.17]] },
+];
 const random = (min, max) => min + Math.random() * (max - min);
 const viewportPoint = (point) => ({ x: point.x * window.innerWidth, y: point.y * window.innerHeight });
 
@@ -41,16 +48,19 @@ function resizePaws() {
   if (existing.width) pawCtx.drawImage(existing, 0, 0, existing.width, existing.height, 0, 0, window.innerWidth, window.innerHeight);
 }
 
-function stampPaw(x, y, size = 18, alpha = 0.17) {
+function stampPaw(x, y, catIndex) {
+  const style = PAW_STYLES[catIndex % PAW_STYLES.length];
+  const size = random(style.minSize, style.maxSize);
   pawCtx.save();
   pawCtx.translate(x, y);
   pawCtx.rotate(random(-0.35, 0.35));
-  pawCtx.fillStyle = `rgba(133, 141, 150, ${alpha})`;
-  pawCtx.filter = "blur(1.5px)";
+  pawCtx.scale(style.width, style.height);
+  pawCtx.fillStyle = `rgba(133, 141, 150, ${style.alpha})`;
+  pawCtx.filter = `blur(${style.blur}px)`;
   pawCtx.beginPath();
   pawCtx.ellipse(0, size * 0.16, size * 0.43, size * 0.34, 0, 0, Math.PI * 2);
   pawCtx.fill();
-  [[-.4,-.43,.16],[-.13,-.61,.17],[.16,-.58,.17],[.43,-.38,.14]].forEach(([tx, ty, radius]) => {
+  style.toes.forEach(([tx, ty, radius]) => {
     pawCtx.beginPath();
     pawCtx.arc(tx * size, ty * size, radius * size, 0, Math.PI * 2);
     pawCtx.fill();
@@ -129,6 +139,7 @@ function createCat(gltf, index) {
   root.position.copy(STARTING_POINTS[index]);
   const target = chooseTarget(root.position);
   root.rotation.y = Math.atan2(target.x - root.position.x, target.z - root.position.z);
+  object.rotation.y = MODEL_FORWARD_OFFSET;
   root.visible = index < adoptedCatCount;
   scene.add(root);
   const mixer = new THREE.AnimationMixer(object);
@@ -188,11 +199,11 @@ function loop() {
       cat.root.position.y = THREE.MathUtils.clamp(cat.root.position.y, ROAM_BOUNDS.minY, ROAM_BOUNDS.maxY);
       cat.root.position.z = THREE.MathUtils.clamp(cat.root.position.z, ROAM_BOUNDS.minZ, ROAM_BOUNDS.maxZ);
       cat.root.children[0].rotation.z = Math.sin(now * .006 + cat.phase) * .006;
-      cat.mixer.timeScale = 1.08;
+      cat.mixer.timeScale = 1.2;
       cat.mixer.update(dt);
       if (now > cat.nextPrint) {
         const projected = cat.root.position.clone().project(camera);
-        stampPaw((projected.x + 1) * .5 * window.innerWidth, (1 - (projected.y + 1) * .5) * window.innerHeight, random(14, 20));
+        stampPaw((projected.x + 1) * .5 * window.innerWidth, (1 - (projected.y + 1) * .5) * window.innerHeight, cat.index);
         cat.nextPrint = now + random(620, 900);
       }
     });
