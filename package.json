@@ -1,0 +1,51 @@
+{
+  "name": "pieceofniya-desktop",
+  "version": "0.1.0",
+  "description": "A transparent Windows desktop pet where ceramic cats wander and leave pawprints.",
+  "main": "src/main.cjs",
+  "author": "niya3d",
+  "license": "MIT",
+  "scripts": {
+    "dev": "concurrently -k \"vite\" \"wait-on http://127.0.0.1:5173 && electron .\"",
+    "build": "vite build",
+    "dist": "npm run build && electron-builder --win nsis --x64",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "three": "^0.180.0",
+    "uiohook-napi": "^1.5.4"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "electron": "^36.4.0",
+    "electron-builder": "^26.0.12",
+    "vite": "^7.1.0",
+    "wait-on": "^8.0.1"
+  },
+  "build": {
+    "appId": "com.niya3d.pieceofniya",
+    "productName": "Piece of Niya",
+    "asar": true,
+    "asarUnpack": ["node_modules/uiohook-napi/**"],
+    "files": [
+      "dist/**/*",
+      "src/main.cjs",
+      "src/preload.cjs",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "src/main.cjs"
+    },
+    "win": {
+      "target": ["nsis"],
+      "artifactName": "Piece-of-Niya-Setup-${version}.${ext}",
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

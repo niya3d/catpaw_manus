@@ -1,0 +1,6 @@
+/* Desktop Pet overlay: only cats, pawprints, and their soft shadows are visible above the Windows desktop. */
+html, body, #three-layer, #paw-layer { position: fixed; inset: 0; width: 100%; height: 100%; margin: 0; overflow: hidden; background: transparent; }
+body { pointer-events: none; }
+#paw-layer { z-index: 1; }
+#three-layer { z-index: 2; }
+#three-layer canvas { display: block; width: 100%; height: 100%; }
