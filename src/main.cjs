@@ -10,6 +10,8 @@ const { uIOhook } = require("uiohook-napi");
 let overlay;
 let tray;
 let paused = false;
+let rendererReady = false;
+let recordedCleanClicks = 0;
 
 function virtualDesktopBounds() {
   const displays = screen.getAllDisplays();
@@ -20,13 +22,19 @@ function virtualDesktopBounds() {
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
-function sendCleanAt(x, y) {
-  if (!overlay || paused) return;
+function sendCleanAt() {
+  if (!overlay || overlay.isDestroyed() || paused || !rendererReady) return;
   const bounds = virtualDesktopBounds();
-  const normalizedX = (x - bounds.x) / bounds.width;
-  const normalizedY = (y - bounds.y) / bounds.height;
+  // Electron returns device-independent screen coordinates, matching BrowserWindow bounds.
+  // This avoids high-DPI coordinate drift from a native global mouse event.
+  const cursor = screen.getCursorScreenPoint();
+  const normalizedX = (cursor.x - bounds.x) / bounds.width;
+  const normalizedY = (cursor.y - bounds.y) / bounds.height;
   if (normalizedX < 0 || normalizedX > 1 || normalizedY < 0 || normalizedY > 1) return;
   overlay.webContents.send("paw:clean-at", { x: normalizedX, y: normalizedY });
+  if (recordedCleanClicks++ < 8) {
+    console.info(`Paw clean at ${normalizedX.toFixed(3)}, ${normalizedY.toFixed(3)}`);
+  }
 }
 
 function createOverlay() {
@@ -55,7 +63,7 @@ function createOverlay() {
   overlay.setAlwaysOnTop(true, "screen-saver");
   overlay.setIgnoreMouseEvents(true, { forward: true });
   overlay.loadFile(path.join(__dirname, "..", "dist", "index.html"));
-  overlay.on("closed", () => { overlay = undefined; });
+  overlay.on("closed", () => { overlay = undefined; rendererReady = false; });
 }
 
 function createTray() {
@@ -75,9 +83,13 @@ function createTray() {
 app.whenReady().then(() => {
   createOverlay();
   createTray();
-  uIOhook.on("mousedown", (event) => sendCleanAt(event.x, event.y));
+  // `click` fires after a full mouse click even while the overlay remains click-through.
+  uIOhook.on("click", () => sendCleanAt());
   uIOhook.start();
-  ipcMain.on("paw:ready", () => overlay?.webContents.send("paw:paused", paused));
+  ipcMain.on("paw:ready", () => {
+    rendererReady = true;
+    overlay?.webContents.send("paw:paused", paused);
+  });
   ipcMain.on("paw:renderer-error", (_event, message) => {
     const line = `[${new Date().toISOString()}] ${message}\n`;
     console.error(line.trim());

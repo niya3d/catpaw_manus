@@ -15,6 +15,11 @@ let paused = false;
 
 // Relative asset URLs are required after Electron packages the renderer as file://.../dist/index.html.
 const MODELS = ["cat-white-brown-walk.glb", "cat-white-pink-walk.glb", "cat-fold-walk.glb"].map((filename) => new URL(`./models/${filename}`, window.location.href).href);
+const ACTIVITY_ZONES = [
+  { minX: -6.9, maxX: -2.55, minY: -2.9, maxY: 1.05, minZ: -2.5, maxZ: 0.25 },
+  { minX: -2.05, maxX: 2.05, minY: -2.9, maxY: 1.05, minZ: -2.5, maxZ: 0.25 },
+  { minX: 2.55, maxX: 6.9, minY: -2.9, maxY: 1.05, minZ: -2.5, maxZ: 0.25 },
+];
 const random = (min, max) => min + Math.random() * (max - min);
 const viewportPoint = (point) => ({ x: point.x * window.innerWidth, y: point.y * window.innerHeight });
 
@@ -79,14 +84,19 @@ const key = new THREE.DirectionalLight(0xfffaf2, 3.4);
 key.position.set(-3, 5, 7);
 scene.add(key);
 
-function chooseTarget(origin) {
-  let target = new THREE.Vector3(random(-6.4, 6.4), random(-2.8, 1.5), random(-2.4, 1));
+function randomPointIn(zone) {
+  return new THREE.Vector3(random(zone.minX, zone.maxX), random(zone.minY, zone.maxY), random(zone.minZ, zone.maxZ));
+}
+
+function chooseTarget(origin, zone) {
+  let target = randomPointIn(zone);
   let attempts = 0;
-  while (target.distanceTo(origin) < 3 && attempts++ < 8) target = new THREE.Vector3(random(-6.4, 6.4), random(-2.8, 1.5), random(-2.4, 1));
+  while (target.distanceTo(origin) < 2.2 && attempts++ < 8) target = randomPointIn(zone);
   return target;
 }
 
 function createCat(gltf, index) {
+  const zone = ACTIVITY_ZONES[index];
   const root = new THREE.Group();
   const object = gltf.scene;
   const box = new THREE.Box3().setFromObject(object);
@@ -95,8 +105,8 @@ function createCat(gltf, index) {
   const scaled = new THREE.Box3().setFromObject(object);
   object.position.y -= scaled.min.y;
   root.add(object);
-  root.position.set(random(-5.7, 5.7), random(-2.7, 1.2), random(-1.9, .2));
-  const target = chooseTarget(root.position);
+  root.position.copy(randomPointIn(zone));
+  const target = chooseTarget(root.position, zone);
   root.rotation.y = Math.atan2(target.x - root.position.x, target.z - root.position.z);
   scene.add(root);
   const mixer = new THREE.AnimationMixer(object);
@@ -105,7 +115,7 @@ function createCat(gltf, index) {
     cleanClip.tracks = cleanClip.tracks.filter((track) => !track.name.startsWith("tripo::Root."));
     return cleanClip;
   }).forEach((clip) => mixer.clipAction(clip).reset().play());
-  cats.push({ root, target, mixer, nextTarget: performance.now() + random(5000, 8500), nextPrint: performance.now() + random(250, 700), phase: index * 2.1 });
+  cats.push({ root, zone, target, mixer, nextTarget: performance.now() + random(5000, 8500), nextPrint: performance.now() + random(250, 700), phase: index * 2.1 });
 }
 
 MODELS.forEach((model, index) => loader.load(
@@ -127,7 +137,7 @@ function loop() {
     cats.forEach((cat) => {
       const direction = cat.target.clone().sub(cat.root.position);
       if (now > cat.nextTarget || direction.length() < .5) {
-        cat.target = chooseTarget(cat.root.position);
+        cat.target = chooseTarget(cat.root.position, cat.zone);
         cat.nextTarget = now + random(5800, 9200);
       }
       direction.copy(cat.target).sub(cat.root.position).normalize();
@@ -136,9 +146,9 @@ function loop() {
       cat.root.rotation.y += THREE.MathUtils.clamp(delta, -dt * .62, dt * .62);
       const alignment = THREE.MathUtils.clamp(Math.cos(Math.min(Math.abs(delta), Math.PI / 2)), .45, 1);
       cat.root.position.addScaledVector(direction, dt * .46 * alignment);
-      cat.root.position.x = THREE.MathUtils.clamp(cat.root.position.x, -6.8, 6.8);
-      cat.root.position.y = THREE.MathUtils.clamp(cat.root.position.y, -3.1, 1.65);
-      cat.root.position.z = THREE.MathUtils.clamp(cat.root.position.z, -2.7, .8);
+      cat.root.position.x = THREE.MathUtils.clamp(cat.root.position.x, cat.zone.minX, cat.zone.maxX);
+      cat.root.position.y = THREE.MathUtils.clamp(cat.root.position.y, cat.zone.minY, cat.zone.maxY);
+      cat.root.position.z = THREE.MathUtils.clamp(cat.root.position.z, cat.zone.minZ, cat.zone.maxZ);
       cat.root.children[0].rotation.z = Math.sin(now * .006 + cat.phase) * .006;
       cat.mixer.timeScale = 1.08;
       cat.mixer.update(dt);
