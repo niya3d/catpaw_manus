@@ -13,7 +13,8 @@ const loader = new GLTFLoader();
 const cats = [];
 let paused = false;
 
-const MODELS = ["/models/cat-white-brown-walk.glb", "/models/cat-white-pink-walk.glb", "/models/cat-fold-walk.glb"];
+// Relative asset URLs are required after Electron packages the renderer as file://.../dist/index.html.
+const MODELS = ["cat-white-brown-walk.glb", "cat-white-pink-walk.glb", "cat-fold-walk.glb"].map((filename) => new URL(`./models/${filename}`, window.location.href).href);
 const random = (min, max) => min + Math.random() * (max - min);
 const viewportPoint = (point) => ({ x: point.x * window.innerWidth, y: point.y * window.innerHeight });
 
@@ -107,7 +108,16 @@ function createCat(gltf, index) {
   cats.push({ root, target, mixer, nextTarget: performance.now() + random(5000, 8500), nextPrint: performance.now() + random(250, 700), phase: index * 2.1 });
 }
 
-MODELS.forEach((model, index) => loader.load(model, (gltf) => createCat(gltf, index)));
+MODELS.forEach((model, index) => loader.load(
+  model,
+  (gltf) => createCat(gltf, index),
+  undefined,
+  (error) => {
+    const message = `Failed to load cat ${index + 1} from ${model}: ${error?.message || String(error)}`;
+    console.error(message);
+    window.pawDesktop?.reportError(message);
+  },
+));
 
 const clock = new THREE.Clock();
 function loop() {

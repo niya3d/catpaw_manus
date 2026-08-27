@@ -2,6 +2,7 @@
  * Windows desktop-pet shell: a transparent, click-through overlay and a
  * global mouse listener let users clean pawprints without blocking desktop use.
  */
+const fs = require("fs");
 const path = require("path");
 const { app, BrowserWindow, Menu, Tray, nativeImage, screen, ipcMain } = require("electron");
 const { uIOhook } = require("uiohook-napi");
@@ -48,6 +49,7 @@ function createOverlay() {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
+      backgroundThrottling: false,
     },
   });
   overlay.setAlwaysOnTop(true, "screen-saver");
@@ -76,6 +78,15 @@ app.whenReady().then(() => {
   uIOhook.on("mousedown", (event) => sendCleanAt(event.x, event.y));
   uIOhook.start();
   ipcMain.on("paw:ready", () => overlay?.webContents.send("paw:paused", paused));
+  ipcMain.on("paw:renderer-error", (_event, message) => {
+    const line = `[${new Date().toISOString()}] ${message}\n`;
+    console.error(line.trim());
+    try {
+      fs.appendFileSync(path.join(app.getPath("userData"), "renderer-errors.log"), line);
+    } catch (error) {
+      console.error("Could not write renderer diagnostic", error);
+    }
+  });
   screen.on("display-added", () => { const bounds = virtualDesktopBounds(); overlay?.setBounds(bounds); });
   screen.on("display-removed", () => { const bounds = virtualDesktopBounds(); overlay?.setBounds(bounds); });
 });
