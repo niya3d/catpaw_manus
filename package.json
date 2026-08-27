@@ -12,8 +12,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "three": "^0.180.0",
-    "uiohook-napi": "^1.5.4"
+    "three": "^0.180.0"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",
@@ -26,7 +25,6 @@
     "appId": "com.niya3d.pieceofniya",
     "productName": "Piece of Niya",
     "asar": true,
-    "asarUnpack": ["node_modules/uiohook-napi/**"],
     "files": [
       "dist/**/*",
       "src/main.cjs",

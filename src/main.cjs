@@ -1,11 +1,10 @@
 /**
  * Windows desktop-pet shell: a transparent, click-through overlay and a
- * global pointer listener lets users soften pawprints without blocking desktop use.
+ * Electron cursor polling lets users soften pawprints without blocking desktop use.
  */
 const fs = require("fs");
 const path = require("path");
 const { app, BrowserWindow, Menu, Tray, nativeImage, screen, ipcMain } = require("electron");
-const { uIOhook } = require("uiohook-napi");
 
 let overlay;
 let tray;
@@ -14,6 +13,8 @@ let rendererReady = false;
 let recordedWipeEvents = 0;
 let lastWipeAt = 0;
 let adoptedCatCount = 3;
+let cursorPoller;
+let lastCursorPoint;
 
 function settingsPath() {
   return path.join(app.getPath("userData"), "piece-of-niya-settings.json");
@@ -65,10 +66,18 @@ function sendWipeAt() {
   const normalizedX = (cursor.x - bounds.x) / bounds.width;
   const normalizedY = (cursor.y - bounds.y) / bounds.height;
   if (normalizedX < 0 || normalizedX > 1 || normalizedY < 0 || normalizedY > 1) return;
+  if (lastCursorPoint && Math.hypot(normalizedX - lastCursorPoint.x, normalizedY - lastCursorPoint.y) < 0.0012) return;
+  lastCursorPoint = { x: normalizedX, y: normalizedY };
   overlay.webContents.send("paw:wipe-at", { x: normalizedX, y: normalizedY });
   if (recordedWipeEvents++ < 8) {
     console.info(`Paw wipe at ${normalizedX.toFixed(3)}, ${normalizedY.toFixed(3)}`);
   }
+}
+
+function startCursorPolling() {
+  if (cursorPoller) clearInterval(cursorPoller);
+  // Uses Electron's own DPI-aware cursor API instead of a packaged native input hook.
+  cursorPoller = setInterval(sendWipeAt, 33);
 }
 
 function createOverlay() {
@@ -131,9 +140,7 @@ app.whenReady().then(() => {
   loadSettings();
   createOverlay();
   createTray();
-  // The overlay never intercepts desktop clicks. Wiping is driven by cursor movement only.
-  uIOhook.on("mousemove", () => sendWipeAt());
-  uIOhook.start();
+  startCursorPolling();
   ipcMain.on("paw:ready", () => {
     rendererReady = true;
     overlay?.webContents.send("paw:paused", paused);
@@ -153,4 +160,6 @@ app.whenReady().then(() => {
 });
 
 app.on("window-all-closed", (event) => event.preventDefault());
-app.on("before-quit", () => uIOhook.stop());
+app.on("before-quit", () => {
+  if (cursorPoller) clearInterval(cursorPoller);
+});
