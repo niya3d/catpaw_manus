@@ -1,6 +1,6 @@
 /**
  * Windows desktop-pet shell: a transparent, click-through overlay and a
- * global mouse listener let users clean pawprints without blocking desktop use.
+ * global pointer listener lets users soften pawprints without blocking desktop use.
  */
 const fs = require("fs");
 const path = require("path");
@@ -11,7 +11,37 @@ let overlay;
 let tray;
 let paused = false;
 let rendererReady = false;
-let recordedCleanClicks = 0;
+let recordedWipeEvents = 0;
+let lastWipeAt = 0;
+let adoptedCatCount = 3;
+
+function settingsPath() {
+  return path.join(app.getPath("userData"), "piece-of-niya-settings.json");
+}
+
+function loadSettings() {
+  try {
+    const saved = JSON.parse(fs.readFileSync(settingsPath(), "utf8"));
+    if ([1, 2, 3].includes(saved.adoptedCatCount)) adoptedCatCount = saved.adoptedCatCount;
+  } catch {
+    // First run has no settings file; three adopted cats are the default.
+  }
+}
+
+function saveSettings() {
+  try {
+    fs.writeFileSync(settingsPath(), JSON.stringify({ adoptedCatCount }, null, 2));
+  } catch (error) {
+    console.error("Could not save desktop pet settings", error);
+  }
+}
+
+function setAdoptedCatCount(count) {
+  adoptedCatCount = count;
+  saveSettings();
+  overlay?.webContents.send("paw:set-cat-count", count);
+  refreshTrayMenu();
+}
 
 function virtualDesktopBounds() {
   const displays = screen.getAllDisplays();
@@ -22,8 +52,12 @@ function virtualDesktopBounds() {
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
-function sendCleanAt() {
+function sendWipeAt() {
   if (!overlay || overlay.isDestroyed() || paused || !rendererReady) return;
+  const now = Date.now();
+  // Prevent a high-frequency native event stream from overwhelming the renderer.
+  if (now - lastWipeAt < 28) return;
+  lastWipeAt = now;
   const bounds = virtualDesktopBounds();
   // Electron returns device-independent screen coordinates, matching BrowserWindow bounds.
   // This avoids high-DPI coordinate drift from a native global mouse event.
@@ -31,9 +65,9 @@ function sendCleanAt() {
   const normalizedX = (cursor.x - bounds.x) / bounds.width;
   const normalizedY = (cursor.y - bounds.y) / bounds.height;
   if (normalizedX < 0 || normalizedX > 1 || normalizedY < 0 || normalizedY > 1) return;
-  overlay.webContents.send("paw:clean-at", { x: normalizedX, y: normalizedY });
-  if (recordedCleanClicks++ < 8) {
-    console.info(`Paw clean at ${normalizedX.toFixed(3)}, ${normalizedY.toFixed(3)}`);
+  overlay.webContents.send("paw:wipe-at", { x: normalizedX, y: normalizedY });
+  if (recordedWipeEvents++ < 8) {
+    console.info(`Paw wipe at ${normalizedX.toFixed(3)}, ${normalizedY.toFixed(3)}`);
   }
 }
 
@@ -66,29 +100,44 @@ function createOverlay() {
   overlay.on("closed", () => { overlay = undefined; rendererReady = false; });
 }
 
+function refreshTrayMenu() {
+  if (!tray) return;
+  const adoptMenu = [1, 2, 3].map((count) => ({
+    label: `${count} ${count === 1 ? "cat" : "cats"}`,
+    type: "radio",
+    checked: adoptedCatCount === count,
+    click: () => setAdoptedCatCount(count),
+  }));
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: "Piece of Niya", enabled: false },
+    { type: "separator" },
+    { label: "Adopted cats", submenu: adoptMenu },
+    { type: "separator" },
+    { label: paused ? "Resume cats" : "Pause cats", click: () => { paused = !paused; overlay?.webContents.send("paw:paused", paused); refreshTrayMenu(); } },
+    { label: "Clear pawprints", click: () => overlay?.webContents.send("paw:clear-pawprints") },
+    { type: "separator" },
+    { label: "Quit Piece of Niya", click: () => app.quit() },
+  ]));
+}
+
 function createTray() {
   const iconPath = path.join(__dirname, "..", "dist", "tray-icon.png");
   tray = new Tray(nativeImage.createFromPath(iconPath));
-  const refreshMenu = () => {
-    tray.setContextMenu(Menu.buildFromTemplate([
-      { label: paused ? "Resume cats" : "Pause cats", click: () => { paused = !paused; overlay?.webContents.send("paw:paused", paused); refreshMenu(); } },
-      { type: "separator" },
-      { label: "Quit Piece of Niya", click: () => app.quit() },
-    ]));
-  };
   tray.setToolTip("Piece of Niya — Desktop Pet");
-  refreshMenu();
+  refreshTrayMenu();
 }
 
 app.whenReady().then(() => {
+  loadSettings();
   createOverlay();
   createTray();
-  // `click` fires after a full mouse click even while the overlay remains click-through.
-  uIOhook.on("click", () => sendCleanAt());
+  // The overlay never intercepts desktop clicks. Wiping is driven by cursor movement only.
+  uIOhook.on("mousemove", () => sendWipeAt());
   uIOhook.start();
   ipcMain.on("paw:ready", () => {
     rendererReady = true;
     overlay?.webContents.send("paw:paused", paused);
+    overlay?.webContents.send("paw:set-cat-count", adoptedCatCount);
   });
   ipcMain.on("paw:renderer-error", (_event, message) => {
     const line = `[${new Date().toISOString()}] ${message}\n`;

@@ -1,6 +1,6 @@
 /**
- * Desktop Pet renderer: low-motion paths give each cat a direction of travel,
- * while pawprints stay behind the 3D layer and erase only at global click points.
+ * Desktop Pet renderer: cats roam the full desktop, retain a natural personal
+ * distance, and leave pawprints that softly clear only beneath the cursor path.
  */
 import "./style.css";
 import * as THREE from "three";
@@ -12,14 +12,14 @@ const pawCtx = pawCanvas.getContext("2d");
 const loader = new GLTFLoader();
 const cats = [];
 let paused = false;
+let adoptedCatCount = 3;
+const activeWipes = [];
 
 // Relative asset URLs are required after Electron packages the renderer as file://.../dist/index.html.
 const MODELS = ["cat-white-brown-walk.glb", "cat-white-pink-walk.glb", "cat-fold-walk.glb"].map((filename) => new URL(`./models/${filename}`, window.location.href).href);
-const ACTIVITY_ZONES = [
-  { minX: -6.9, maxX: -2.55, minY: -2.9, maxY: 1.05, minZ: -2.5, maxZ: 0.25 },
-  { minX: -2.05, maxX: 2.05, minY: -2.9, maxY: 1.05, minZ: -2.5, maxZ: 0.25 },
-  { minX: 2.55, maxX: 6.9, minY: -2.9, maxY: 1.05, minZ: -2.5, maxZ: 0.25 },
-];
+const ROAM_BOUNDS = { minX: -6.6, maxX: 6.6, minY: -2.85, maxY: 1.1, minZ: -2.45, maxZ: 0.35 };
+const STARTING_POINTS = [new THREE.Vector3(-4.6, -1.55, -1.25), new THREE.Vector3(0, -1.15, -1.65), new THREE.Vector3(4.6, -1.55, -1.25)];
+const PERSONAL_SPACE = 1.55;
 const random = (min, max) => min + Math.random() * (max - min);
 const viewportPoint = (point) => ({ x: point.x * window.innerWidth, y: point.y * window.innerHeight });
 
@@ -54,20 +54,33 @@ function stampPaw(x, y, size = 18, alpha = 0.17) {
   pawCtx.restore();
 }
 
-function cleanAt(point) {
+function queueSoftWipe(point) {
   const { x, y } = viewportPoint(point);
-  const radius = 24;
-  const gradient = pawCtx.createRadialGradient(x, y, radius * 0.1, x, y, radius);
-  gradient.addColorStop(0, "rgba(0,0,0,1)");
-  gradient.addColorStop(0.55, "rgba(0,0,0,.7)");
-  gradient.addColorStop(1, "rgba(0,0,0,0)");
-  pawCtx.save();
-  pawCtx.globalCompositeOperation = "destination-out";
-  pawCtx.fillStyle = gradient;
-  pawCtx.beginPath();
-  pawCtx.arc(x, y, radius, 0, Math.PI * 2);
-  pawCtx.fill();
-  pawCtx.restore();
+  activeWipes.push({ x, y, age: 0 });
+  if (activeWipes.length > 80) activeWipes.splice(0, activeWipes.length - 80);
+}
+
+function applySoftWipes(dt) {
+  for (let index = activeWipes.length - 1; index >= 0; index -= 1) {
+    const wipe = activeWipes[index];
+    wipe.age += dt;
+    const progress = Math.min(wipe.age / 0.32, 1);
+    const radius = 12 + progress * 9;
+    const gradient = pawCtx.createRadialGradient(wipe.x, wipe.y, radius * 0.08, wipe.x, wipe.y, radius);
+    gradient.addColorStop(0, "rgba(0,0,0,.38)");
+    gradient.addColorStop(0.42, "rgba(0,0,0,.16)");
+    gradient.addColorStop(1, "rgba(0,0,0,0)");
+    pawCtx.save();
+    pawCtx.globalCompositeOperation = "destination-out";
+    pawCtx.globalAlpha = .62 - progress * .25;
+    pawCtx.filter = `blur(${2.2 + progress * 2.4}px)`;
+    pawCtx.fillStyle = gradient;
+    pawCtx.beginPath();
+    pawCtx.arc(wipe.x, wipe.y, radius, 0, Math.PI * 2);
+    pawCtx.fill();
+    pawCtx.restore();
+    if (progress >= 1) activeWipes.splice(index, 1);
+  }
 }
 
 const scene = new THREE.Scene();
@@ -84,19 +97,18 @@ const key = new THREE.DirectionalLight(0xfffaf2, 3.4);
 key.position.set(-3, 5, 7);
 scene.add(key);
 
-function randomPointIn(zone) {
-  return new THREE.Vector3(random(zone.minX, zone.maxX), random(zone.minY, zone.maxY), random(zone.minZ, zone.maxZ));
+function randomPointIn(bounds = ROAM_BOUNDS) {
+  return new THREE.Vector3(random(bounds.minX, bounds.maxX), random(bounds.minY, bounds.maxY), random(bounds.minZ, bounds.maxZ));
 }
 
-function chooseTarget(origin, zone) {
-  let target = randomPointIn(zone);
+function chooseTarget(origin) {
+  let target = randomPointIn();
   let attempts = 0;
-  while (target.distanceTo(origin) < 2.2 && attempts++ < 8) target = randomPointIn(zone);
+  while ((target.distanceTo(origin) < 2.4 || cats.some((cat) => cat.root.visible && cat.root.position.distanceTo(target) < PERSONAL_SPACE * 1.4)) && attempts++ < 16) target = randomPointIn();
   return target;
 }
 
 function createCat(gltf, index) {
-  const zone = ACTIVITY_ZONES[index];
   const root = new THREE.Group();
   const object = gltf.scene;
   const box = new THREE.Box3().setFromObject(object);
@@ -105,9 +117,10 @@ function createCat(gltf, index) {
   const scaled = new THREE.Box3().setFromObject(object);
   object.position.y -= scaled.min.y;
   root.add(object);
-  root.position.copy(randomPointIn(zone));
-  const target = chooseTarget(root.position, zone);
+  root.position.copy(STARTING_POINTS[index]);
+  const target = chooseTarget(root.position);
   root.rotation.y = Math.atan2(target.x - root.position.x, target.z - root.position.z);
+  root.visible = index < adoptedCatCount;
   scene.add(root);
   const mixer = new THREE.AnimationMixer(object);
   gltf.animations.map((clip) => {
@@ -115,7 +128,7 @@ function createCat(gltf, index) {
     cleanClip.tracks = cleanClip.tracks.filter((track) => !track.name.startsWith("tripo::Root."));
     return cleanClip;
   }).forEach((clip) => mixer.clipAction(clip).reset().play());
-  cats.push({ root, zone, target, mixer, nextTarget: performance.now() + random(5000, 8500), nextPrint: performance.now() + random(250, 700), phase: index * 2.1 });
+  cats.push({ index, root, target, mixer, nextTarget: performance.now() + random(5000, 8500), nextPrint: performance.now() + random(250, 700), phase: index * 2.1 });
 }
 
 MODELS.forEach((model, index) => loader.load(
@@ -133,22 +146,33 @@ const clock = new THREE.Clock();
 function loop() {
   const dt = Math.min(clock.getDelta(), 0.04);
   const now = performance.now();
+  applySoftWipes(dt);
   if (!paused) {
     cats.forEach((cat) => {
+      if (!cat.root.visible) return;
       const direction = cat.target.clone().sub(cat.root.position);
       if (now > cat.nextTarget || direction.length() < .5) {
-        cat.target = chooseTarget(cat.root.position, cat.zone);
+        cat.target = chooseTarget(cat.root.position);
         cat.nextTarget = now + random(5800, 9200);
       }
       direction.copy(cat.target).sub(cat.root.position).normalize();
+      const separation = new THREE.Vector3();
+      cats.forEach((other) => {
+        if (other === cat || !other.root.visible) return;
+        const gap = cat.root.position.distanceTo(other.root.position);
+        if (gap < PERSONAL_SPACE) {
+          separation.add(cat.root.position.clone().sub(other.root.position).normalize().multiplyScalar((PERSONAL_SPACE - gap) / PERSONAL_SPACE));
+        }
+      });
+      if (separation.lengthSq() > 0) direction.addScaledVector(separation.normalize(), 1.3).normalize();
       const heading = Math.atan2(direction.x, direction.z);
       const delta = Math.atan2(Math.sin(heading - cat.root.rotation.y), Math.cos(heading - cat.root.rotation.y));
       cat.root.rotation.y += THREE.MathUtils.clamp(delta, -dt * .62, dt * .62);
       const alignment = THREE.MathUtils.clamp(Math.cos(Math.min(Math.abs(delta), Math.PI / 2)), .45, 1);
       cat.root.position.addScaledVector(direction, dt * .46 * alignment);
-      cat.root.position.x = THREE.MathUtils.clamp(cat.root.position.x, cat.zone.minX, cat.zone.maxX);
-      cat.root.position.y = THREE.MathUtils.clamp(cat.root.position.y, cat.zone.minY, cat.zone.maxY);
-      cat.root.position.z = THREE.MathUtils.clamp(cat.root.position.z, cat.zone.minZ, cat.zone.maxZ);
+      cat.root.position.x = THREE.MathUtils.clamp(cat.root.position.x, ROAM_BOUNDS.minX, ROAM_BOUNDS.maxX);
+      cat.root.position.y = THREE.MathUtils.clamp(cat.root.position.y, ROAM_BOUNDS.minY, ROAM_BOUNDS.maxY);
+      cat.root.position.z = THREE.MathUtils.clamp(cat.root.position.z, ROAM_BOUNDS.minZ, ROAM_BOUNDS.maxZ);
       cat.root.children[0].rotation.z = Math.sin(now * .006 + cat.phase) * .006;
       cat.mixer.timeScale = 1.08;
       cat.mixer.update(dt);
@@ -169,9 +193,24 @@ window.addEventListener("resize", () => {
   renderer.setSize(window.innerWidth, window.innerHeight);
   resizePaws();
 });
+
+function setAdoptedCatCount(count) {
+  adoptedCatCount = Math.max(1, Math.min(3, Number(count) || 3));
+  cats.forEach((cat) => {
+    cat.root.visible = cat.index < adoptedCatCount;
+    if (cat.root.visible) cat.target = chooseTarget(cat.root.position);
+  });
+}
+
+function clearPawprints() {
+  activeWipes.length = 0;
+  pawCtx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+}
 resizePaws();
 renderer.setSize(window.innerWidth, window.innerHeight);
-window.pawDesktop?.onCleanAt(cleanAt);
+window.pawDesktop?.onWipeAt(queueSoftWipe);
 window.pawDesktop?.onPaused((value) => { paused = value; });
+window.pawDesktop?.onCatCount(setAdoptedCatCount);
+window.pawDesktop?.onClearPawprints(clearPawprints);
 window.pawDesktop?.ready();
 loop();
